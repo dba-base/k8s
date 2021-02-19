@@ -1,0 +1,60 @@
+clusterNode:
+  master_node: 10.105.1.103
+  worker_node: 10.105.1.104,10.105.1.105
+
+# database
+zcbusDB:
+  image: mysql:5.7
+  master_data_path: /data/k8s/mysql/mysql-0
+  slave_data_path: /data/k8s/mysql/mysql-1
+  master_worknode: db04
+  slave_worknode: db05
+
+data_volume: /usr/local/docker
+# kafka
+zcbusKafka:
+  image: reg.zbomc.com/kafka/kubernetes-kafka:1.0-10.2.1
+  kfk_ports: 9092
+  kafka_volumes: /usr/local/docker/kafka/data
+  kafka_worknode01: db04
+  kafka_worknode02: db04
+  kafka_worknode03: db05
+  kafka_worknode01_path: /data/k8s/kafka/kafkadata-0
+  kafka_worknode02_path: /data/k8s/kafka/kafkadata-1
+  kafka_worknode03_path: /data/k8s/kafka/kafkadata-2
+  kafka_mem_quota: 128Mi
+  kafka_cpu_quota: 0.1
+  kafka_containerPort: 9093
+  kafka_disk_space: 5G
+  kafka_storage: 5Gi
+
+zcbusZookeeper:
+  image: reg.zbomc.com/zookeeper/kubernetes-zookeeper:1.0-3.4.10
+  zookeeper_worknode01: db04
+  zookeeper_worknode02: db04
+  zookeeper_worknode03: db05
+  zookeeper_worknode01_path: /data/k8s/kafka/zkdata-0
+  zookeeper_worknode02_path: /data/k8s/kafka/zkdata-1
+  zookeeper_worknode03_path: /data/k8s/kafka/zkdata-2
+  zookeeper_storage: 5Gi
+  zookeeper_disk_space: 5G
+  zookeeper_mem_quota: 128Mi
+  zookeeper_cpu_quota: 0.5
+
+zcbusWeb:
+  image: reg.zbomc.com/zcbus_web/zcbus_web:v3.0.4
+  ports: 8888
+  zcbusNodePort: 30888
+
+zcbusServer:
+  image: reg.zbomc.com/zcbus_server/zcbus_server:v3.0.5
+  ENV:
+    LANG: C.UTF-8
+    dbuser: "SFVVTjo"
+    dbpwd: 'SFVVTjo'
+    dbhost: zcbusdb
+    dbport: 3306
+    database: "zcbus"
+    ZCBUS_CONTAINER: "zcbus"
+  worknode: "db04"
+

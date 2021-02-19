@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zcbusserver-deployment
+  namespace: zcbus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zcbusserver
+  template:
+    metadata:
+      labels:
+        app: zcbusserver
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: {{zcbus_worknode}}
+      containers:
+      - name: zcbusserver
+        image: {{zcbusServerImage}}
+        # 只有镜像不存在时，才会进行镜像拉取
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: ZCBUS_CONTAINER
+          value: {{zcbus_container}}
+        - name: dbhost
+          value: 'mysql-master'
+        - name: dbuser
+          value: 'SFVVTjo'
+        - name: dbpwd
+          value: 'SFVVTjo'
+        - name: dbport
+          value: '3306'
+        - name: database
+          value: "zcbus"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zcbusweb-deployment
+  namespace: zcbus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zcbusweb
+  template:
+    metadata:
+      labels:
+        app: zcbusweb
+    spec:
+      containers:
+      - name: zcbusweb
+        image: {{zcbusWebImage}}
+        # 只有镜像不存在时，才会进行镜像拉取
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: dbhost
+          value: mysql-master
+        ports:
+          - containerPort: 8888
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zcbusweb-svc
+  labels:
+    app: zcbusweb
+spec:
+  type: NodePort
+  ports:
+  - port: 8888
+    targetPort: {{zcbusWebPort}}
+    nodePort: {{zcbusNodePort}}
+  selector:
+    app: zcbusweb
+

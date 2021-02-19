@@ -1,0 +1,8 @@
+db04 /data/k8s/mysql/mysql-0
+db05 /data/k8s/mysql/mysql-1
+db04 /data/k8s/kafka/kafkadata-0
+db04 /data/k8s/kafka/kafkadata-1
+db05 /data/k8s/kafka/kafkadata-2
+db04 /data/k8s/kafka/zkdata-0
+db04 /data/k8s/kafka/zkdata-1
+db05 /data/k8s/kafka/zkdata-2

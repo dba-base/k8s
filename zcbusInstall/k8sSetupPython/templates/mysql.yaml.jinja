@@ -1,0 +1,273 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: mysql-storage
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: mysql-data-0
+spec:
+  capacity:
+    storage: 5Gi
+  volumeMode: Filesystem
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Delete
+  storageClassName: mysql-storage
+  local:
+    path: {{master_data_path}}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - {{master_worknode}}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: mysql-data-1
+spec:
+  capacity:
+    storage: 5Gi
+  volumeMode: Filesystem
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Delete
+  storageClassName: mysql-storage
+  local:
+    path: {{slave_data_path}}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - {{slave_worknode}}
+---
+# MySQL Master Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-master
+spec:
+  type: ClusterIP  # 可以提供MySQL读写服务
+  ports:
+  - name: mysql
+    port: 3306
+    protocol: TCP
+    targetPort: 3306
+  selector:
+    app: mysql-master
+
+---
+# MySQL Master StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql-master
+spec:
+  replicas: 1  # 必须是1
+  selector:
+    matchLabels:
+      app: mysql-master
+  serviceName: mysql-master
+  template:
+    metadata:
+      labels:
+        app: mysql-master
+    spec:
+      containers:
+        - name: mysql
+          image: {{zcbusdb_image}}
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            exec:
+              command: ["mysqladmin", "-uroot", "-p$(MYSQL_ROOT_PASSWORD)", "ping"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+          readinessProbe:
+            exec:
+              command: ["mysql", "-uroot", "-p$(MYSQL_ROOT_PASSWORD)", "-e", "SELECT 1"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              value: "root"
+          ports:
+            - containerPort: 3306
+              name: mysql
+              protocol: TCP
+          volumeMounts:
+            - name: mysql-master-data
+              mountPath: /var/lib/mysql  # 持久化数据库
+            - name: mysql-conf
+              mountPath: /etc/mysql/conf.d/  # mysql启动配置文件
+            - name: mysql-init
+              mountPath: /docker-entrypoint-initdb.d/  # master初始化sql语句
+            - name: zcbussql
+              mountPath: /usr/share/zcbus/
+      volumes:
+        - name: mysql-conf
+          configMap:
+            name: mysql-conf
+            items:
+              - key: mysql-master.cnf
+                path: mysql-master.cnf
+        - name: mysql-init
+          configMap:
+            name: mysql-conf
+            items:
+              - key: init-master.sql
+                path: init.sql
+        - name: zcbussql
+          hostPath:
+            path: /data/k8s/mysql/zcbussql
+            type: DirectoryOrCreate
+
+  volumeClaimTemplates:
+    - metadata:
+        name: mysql-master-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: mysql-storage
+        resources:
+          requests:
+            storage: 5Gi
+---
+# MySQL Slave Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-slave
+#  namespace: zcbus
+spec:
+  type: ClusterIP   # 提供MySQL只读服务
+  ports:
+  - name: mysql
+    port: 3306
+    protocol: TCP
+    targetPort: 3306
+  selector:
+    app: mysql-slave
+
+---
+# MySQL StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql-slave
+spec:
+  replicas: 1  # 可以是1个或更多
+  selector:
+    matchLabels:
+      app: mysql-slave
+  serviceName: mysql-slave  # 必须指定service
+  template:
+    metadata:
+      labels:
+        app: mysql-slave
+    spec:
+      initContainers:  # 用于生成slave server-id,确保多个slave server-id不重复
+        - name: init-mysql
+          image: {{zcbusdb_image}}
+          imagePullPolicy: IfNotPresent
+          command:
+            - bash
+            - "-c"
+            - |
+              set -ex
+              # 从config-map中复制配置文件到emptyDir，因为config-map目录为只读
+              cp /etc/mysql-slave-conf/mysql-slave.cnf /etc/conf.d/mysql-slave.cnf
+              # 从Pod序号生成server-id, =~ 判断字符串包含关系，BASH_REMATCH变量存储匹配结果
+              [[ `hostname` =~ -([0-9]+)$ ]] || exit 1
+              pod_number=${BASH_REMATCH[1]}
+              echo -e "\nserver-id=$((100 + pod_number))" >> /etc/conf.d/mysql-slave.cnf
+          volumeMounts:
+            - name: server-conf
+              mountPath: /etc/conf.d/
+            - name: mysql-slave-conf
+              mountPath: /etc/mysql-slave-conf/
+      containers:
+        - name: mysql
+          image: mysql:5.7
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              value: "root"
+            - name: REPL_USERNAME
+              value: "repl"
+            - name: REPL_PASSWORD
+              value: "123456"
+          lifecycle:
+            postStart:
+              exec:
+                command: ["/bin/sh","-c","if [ -f '/var/lib/mysql/mysql-bin.index' ]; then sh /reset-slave.sh; fi"]
+          livenessProbe:
+            exec:
+              command: ["mysqladmin", "-uroot", "-p$(MYSQL_ROOT_PASSWORD)", "ping"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+          readinessProbe:
+            exec:
+              command: ["mysql", "-uroot", "-p$(MYSQL_ROOT_PASSWORD)", "-e", "SELECT 1"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+          ports:
+            - containerPort: 3306
+              name: mysql
+              protocol: TCP
+          volumeMounts:
+            - name: mysql-slave-data
+              mountPath: /var/lib/mysql
+            - name: server-conf
+              mountPath: /etc/mysql/conf.d/
+            - name: mysql-slave-init
+              mountPath: /docker-entrypoint-initdb.d/
+            - name: mysql-slave-reset
+              mountPath: /reset-slave.sh
+              subPath: reset-slave.sh   # 以单个文件形式挂载
+      volumes:
+        - name: server-conf
+          emptyDir: {}
+        - name: mysql-slave-conf
+          configMap:
+            name: mysql-conf
+            items:
+              - key: mysql-slave.cnf
+                path: mysql-slave.cnf
+        - name: mysql-slave-init
+          configMap:
+            name: mysql-conf
+            items:
+              - key: init-slave.sql
+                path: init-slave.sql
+        - name: mysql-slave-reset
+          configMap:
+            name: mysql-conf
+            defaultMode: 0777    # 默认权限为0644，需要增加执行权限
+            items:
+              - key: reset-slave.sh
+                path: reset-slave.sh
+
+  volumeClaimTemplates:
+    - metadata:
+        name: mysql-slave-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: mysql-storage
+        resources:
+          requests:
+            storage: 5Gi
+

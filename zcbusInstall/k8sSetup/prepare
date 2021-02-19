@@ -1,0 +1,21 @@
+#!/bin/bash
+DIR="$(cd "$(dirname "$0")" && pwd)"
+zcbus_dir=${DIR}
+# Clean up input dir
+rm -rf ${DIR}/input
+# Create a input dirs
+mkdir -p ${zcbus_dir}/input
+input_dir=${zcbus_dir}/input
+yaml_dir=$zcbus_dir/yaml
+
+cp ${zcbus_dir}/zcbus.yml $input_dir/zcbus.yml
+
+docker run --rm -v $input_dir:/input:z \
+                    -v $yaml_dir:/yaml:z \
+                    -v /:/hostfs:z \
+                      reg.zbomc.com/k8s/prepare:v3.0.5 $@
+                    
+mv $input_dir/ansible.tmp .
+echo "Clean up the input dir"
+# Clean up input dir
+rm -rf ${DIR}/input
